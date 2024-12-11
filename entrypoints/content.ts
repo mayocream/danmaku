@@ -1,106 +1,174 @@
-import { parseChatMessage } from '../utils'
+type Message = {
+  text: string
+  color: string
+  x: number
+  y: number
+  width: number
+  lane: number
+}
 
-class DanmakuOverlay {
-  private container: HTMLDivElement
-  private messages: Map<string, HTMLDivElement>
-  private lanes: boolean[]
-  private readonly laneCount = 20
-  private readonly messageLifetime = 8000 // 8 seconds
+type State = {
+  canvas: HTMLCanvasElement
+  ctx: CanvasRenderingContext2D
+  messages: Message[]
+  frameId: number
+  lastTime: number
+}
 
-  constructor() {
-    this.container = document.createElement('div')
-    this.container.className = 'danmaku-container'
-    this.messages = new Map()
-    this.lanes = new Array(this.laneCount).fill(false)
-    this.initialize()
-  }
+// Simple configuration
+const config = {
+  lanes: 20,
+  speed: 150,
+  fontSize: 24,
+  pollInterval: 1000,
+} as const
 
-  private initialize() {
-    console.log('Danmaku overlay initialized')
-    // Wait for YouTube player to be ready
-    const waitForPlayer = setInterval(() => {
-      const player = document.querySelector('.html5-video-player')
-      if (player) {
-        clearInterval(waitForPlayer)
-        player.appendChild(this.container)
-        this.observeChatMessages()
-      }
-    }, 1000)
-  }
+// Core rendering functions
+const createCanvas = () => {
+  const canvas = document.createElement('canvas')
+  Object.assign(canvas.style, {
+    position: 'absolute',
+    top: '0',
+    left: '0',
+    pointerEvents: 'none',
+  })
+  return canvas
+}
 
-  private observeChatMessages() {
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        mutation.addedNodes.forEach((node) => {
-          if (
-            node instanceof HTMLElement &&
-            node.matches('yt-live-chat-text-message-renderer')
-          ) {
-            const message = parseChatMessage(node)
-            if (message) {
-              this.addDanmaku(message)
-            }
-          }
-        })
-      })
-    })
-
-    // Observe the live chat iframe
-    const observeLiveChat = setInterval(() => {
-      const chatFrame = document.querySelector('iframe#chatframe')
-      if (chatFrame) {
-        clearInterval(observeLiveChat)
-        const chatContent = (chatFrame as HTMLIFrameElement).contentDocument?.querySelector('#items')
-        if (chatContent) {
-          observer.observe(chatContent, { childList: true, subtree: true })
-        }
-      }
-    }, 1000)
-  }
-
-  private findAvailableLane(): number {
-    const lane = this.lanes.findIndex((occupied) => !occupied)
-    return lane !== -1 ? lane : Math.floor(Math.random() * this.laneCount)
-  }
-
-  private addDanmaku(message: { id: string; text: string; color?: string }) {
-    const lane = this.findAvailableLane()
-    this.lanes[lane] = true
-
-    const danmaku = document.createElement('div')
-    danmaku.className = 'danmaku-message'
-    danmaku.textContent = message.text
-    danmaku.style.top = `${(lane / this.laneCount) * 100}%`
-    if (message.color) {
-      danmaku.style.color = message.color
-    }
-
-    this.container.appendChild(danmaku)
-    this.messages.set(message.id, danmaku)
-
-    // Animate the message
-    requestAnimationFrame(() => {
-      danmaku.style.transform = 'translateX(-100%)'
-      danmaku.style.transition = `transform ${this.messageLifetime}ms linear`
-    })
-
-    // Clean up after animation
-    setTimeout(() => {
-      this.messages.delete(message.id)
-      danmaku.remove()
-      this.lanes[lane] = false
-    }, this.messageLifetime)
+const initState = (): State => {
+  const canvas = createCanvas()
+  const ctx = canvas.getContext('2d')!
+  return {
+    canvas,
+    ctx,
+    messages: [],
+    frameId: 0,
+    lastTime: performance.now(),
   }
 }
 
+const resizeCanvas = (state: State) => {
+  const video = document.querySelector<HTMLVideoElement>(
+    '.html5-video-container video'
+  )
+  if (!video) return
+
+  const { width, height } = video.getBoundingClientRect()
+  state.canvas.width = width
+  state.canvas.height = height
+  state.ctx.scale(window.devicePixelRatio, window.devicePixelRatio)
+  state.ctx.font = `${config.fontSize}px Arial`
+}
+
+// Message handling
+const createMessage = (state: State, text: string, color: string): Message => {
+  const width = state.ctx.measureText(text).width
+  const laneHeight = state.canvas.height / config.lanes
+  const lane = Math.floor(Math.random() * config.lanes)
+
+  return {
+    text,
+    color,
+    x: state.canvas.width,
+    y: (lane + 0.5) * laneHeight,
+    width,
+    lane,
+  }
+}
+
+// Main render loop
+const render = (state: State) => {
+  const now = performance.now()
+  const delta = (now - state.lastTime) / 1000
+  state.lastTime = now
+
+  // Update positions and remove off-screen messages
+  state.messages = state.messages.filter((msg) => {
+    msg.x -= config.speed * delta
+    return msg.x + msg.width > 0
+  })
+
+  // Draw frame
+  const { ctx, canvas } = state
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  ctx.textBaseline = 'middle'
+
+  state.messages.forEach((msg) => {
+    ctx.fillStyle = msg.color
+    ctx.fillText(msg.text, msg.x, msg.y)
+  })
+
+  state.frameId = requestAnimationFrame(() => render(state))
+}
+
+// Chat observer
+const observeChat = (state: State) => {
+  const processMessage = (node: Element) => {
+    const text = node.querySelector('#message')?.textContent
+    const author = node.querySelector('#author-name')
+
+    if (text && author) {
+      const color = getComputedStyle(author).color
+      state.messages.push(createMessage(state, text, color))
+    }
+  }
+
+  new MutationObserver((mutations) => {
+    mutations.forEach((mutation) => {
+      mutation.addedNodes.forEach((node) => {
+        if (
+          node instanceof HTMLElement &&
+          node.matches('yt-live-chat-text-message-renderer')
+        ) {
+          processMessage(node)
+        }
+      })
+    })
+  }).observe(
+    (
+      document.querySelector('iframe#chatframe') as HTMLIFrameElement
+    )?.contentDocument?.querySelector('#items') ??
+      document.createElement('div'),
+    { childList: true, subtree: true }
+  )
+}
+
+// Main initialization
+const init = () => {
+  const state = initState()
+
+  const initPlayer = setInterval(() => {
+    const player = document.querySelector('.html5-video-container')
+    if (!player) return
+
+    clearInterval(initPlayer)
+    player.appendChild(state.canvas)
+
+    // Setup
+    resizeCanvas(state)
+    new ResizeObserver(() => resizeCanvas(state)).observe(
+      document.querySelector('.html5-video-container video')!
+    )
+
+    render(state)
+    observeChat(state)
+  }, config.pollInterval)
+
+  // Cleanup function
+  return () => {
+    cancelAnimationFrame(state.frameId)
+    state.canvas.remove()
+  }
+}
+
+// Entry point
 export default defineContentScript({
   matches: ['*://*.youtube.com/*'],
   main() {
-    // Initialize when page loads
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => new DanmakuOverlay())
-    } else {
-      new DanmakuOverlay()
-    }
+    return document.readyState === 'loading'
+      ? new Promise((resolve) =>
+          document.addEventListener('DOMContentLoaded', () => resolve(init()))
+        )
+      : init()
   },
 })

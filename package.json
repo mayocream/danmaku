@@ -1,6 +1,6 @@
 {
   "name": "danmaku",
-  "description": "Damaku support for Youtube",
+  "description": "Damaku support for Youtube Live",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -15,15 +15,15 @@
     "postinstall": "wxt prepare"
   },
   "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.287",
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react": "^19.0.1",
+    "@types/react-dom": "^19.0.2",
     "@wxt-dev/module-react": "^1.1.2",
     "typescript": "^5.7.2",
-    "wxt": "^0.19.17"
+    "wxt": "^0.19.22"
   }
 }
