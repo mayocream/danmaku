@@ -4,7 +4,6 @@ type Message = {
   x: number
   y: number
   width: number
-  lane: number
 }
 
 type State = {
@@ -12,18 +11,16 @@ type State = {
   ctx: CanvasRenderingContext2D
   messages: Message[]
   frameId: number
-  lastTime: number
 }
 
-// Simple configuration
 const config = {
-  lanes: 20,
-  speed: 150,
+  lanes: 12, // Number of vertical lanes
+  speed: 150, // Pixels per second
   fontSize: 24,
-  pollInterval: 1000,
-} as const
+  minSpacing: 50, // Minimum horizontal spacing between messages
+}
 
-// Core rendering functions
+// Create and setup canvas
 const createCanvas = () => {
   const canvas = document.createElement('canvas')
   Object.assign(canvas.style, {
@@ -38,13 +35,7 @@ const createCanvas = () => {
 const initState = (): State => {
   const canvas = createCanvas()
   const ctx = canvas.getContext('2d')!
-  return {
-    canvas,
-    ctx,
-    messages: [],
-    frameId: 0,
-    lastTime: performance.now(),
-  }
+  return { canvas, ctx, messages: [], frameId: 0 }
 }
 
 const resizeCanvas = (state: State) => {
@@ -60,42 +51,67 @@ const resizeCanvas = (state: State) => {
   state.ctx.font = `${config.fontSize}px Arial`
 }
 
-// Message handling
-const createMessage = (state: State, text: string, color: string): Message => {
-  const width = state.ctx.measureText(text).width
-  const laneHeight = state.canvas.height / config.lanes
-  const lane = Math.floor(Math.random() * config.lanes)
+// Simple collision check for a single lane
+const hasCollisionInLane = (
+  state: State,
+  x: number,
+  width: number,
+  lane: number
+): boolean => {
+  const y = (lane + 0.5) * (state.canvas.height / config.lanes)
 
-  return {
-    text,
-    color,
-    x: state.canvas.width,
-    y: (lane + 0.5) * laneHeight,
-    width,
-    lane,
+  return state.messages.some((msg) => {
+    if (Math.abs(msg.y - y) > config.fontSize) return false
+    const spacing = config.minSpacing
+    return !(x - spacing > msg.x + msg.width || x + width + spacing < msg.x)
+  })
+}
+
+// Find available lane and position for new message
+const findSafePosition = (
+  state: State,
+  width: number
+): { x: number; y: number } | null => {
+  const lanes = Array.from({ length: config.lanes }, (_, i) => i)
+  const x = state.canvas.width
+
+  // Try each lane in random order
+  for (const lane of lanes.sort(() => Math.random() - 0.5)) {
+    const y = (lane + 0.5) * (state.canvas.height / config.lanes)
+    if (!hasCollisionInLane(state, x, width, lane)) {
+      return { x, y }
+    }
   }
+  return null
+}
+
+const createMessage = (
+  state: State,
+  text: string,
+  color: string
+): Message | null => {
+  const width = state.ctx.measureText(text).width
+  const position = findSafePosition(state, width)
+
+  if (!position) return null
+
+  return { text, color, width, ...position }
 }
 
 // Main render loop
 const render = (state: State) => {
-  const now = performance.now()
-  const delta = (now - state.lastTime) / 1000
-  state.lastTime = now
-
-  // Update positions and remove off-screen messages
-  state.messages = state.messages.filter((msg) => {
-    msg.x -= config.speed * delta
-    return msg.x + msg.width > 0
-  })
-
-  // Draw frame
+  // Clear canvas
   const { ctx, canvas } = state
   ctx.clearRect(0, 0, canvas.width, canvas.height)
-  ctx.textBaseline = 'middle'
 
-  state.messages.forEach((msg) => {
+  // Update and draw messages
+  state.messages = state.messages.filter((msg) => {
+    msg.x -= config.speed / 60 // Assume 60fps for simplicity
+    if (msg.x + msg.width < 0) return false
+
     ctx.fillStyle = msg.color
     ctx.fillText(msg.text, msg.x, msg.y)
+    return true
   })
 
   state.frameId = requestAnimationFrame(() => render(state))
@@ -109,12 +125,13 @@ const observeChat = (state: State) => {
 
     if (text && author) {
       const color = getComputedStyle(author).color
-      state.messages.push(createMessage(state, text, color))
+      const message = createMessage(state, text, color)
+      if (message) state.messages.push(message)
     }
   }
 
   new MutationObserver((mutations) => {
-    mutations.forEach((mutation) => {
+    mutations.forEach((mutation) =>
       mutation.addedNodes.forEach((node) => {
         if (
           node instanceof HTMLElement &&
@@ -123,7 +140,7 @@ const observeChat = (state: State) => {
           processMessage(node)
         }
       })
-    })
+    )
   }).observe(
     (
       document.querySelector('iframe#chatframe') as HTMLIFrameElement
@@ -133,7 +150,7 @@ const observeChat = (state: State) => {
   )
 }
 
-// Main initialization
+// Initialize
 const init = () => {
   const state = initState()
 
@@ -144,7 +161,6 @@ const init = () => {
     clearInterval(initPlayer)
     player.appendChild(state.canvas)
 
-    // Setup
     resizeCanvas(state)
     new ResizeObserver(() => resizeCanvas(state)).observe(
       document.querySelector('.html5-video-container video')!
@@ -152,16 +168,14 @@ const init = () => {
 
     render(state)
     observeChat(state)
-  }, config.pollInterval)
+  }, 1000)
 
-  // Cleanup function
   return () => {
     cancelAnimationFrame(state.frameId)
     state.canvas.remove()
   }
 }
 
-// Entry point
 export default defineContentScript({
   matches: ['*://*.youtube.com/*'],
   main() {
