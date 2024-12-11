@@ -1,3 +1,5 @@
-# WXT + React
+# Danmaku
 
-This template should help get you started developing with React in WXT.
+Youtube Danmaku extension for Chrome / Firefox.
+
+![](./docs/screenshot.jpg)
